@@ -40,7 +40,7 @@ DROP TABLE IF EXISTS ticket;
 CREATE TABLE ticket (
     ticketID char(50),
     cost smallint,
-    PRIMARY KEY (ticektID)  
+    PRIMARY KEY (ticketID)  
 );
 
 DROP TABLE IF EXISTS seat;
