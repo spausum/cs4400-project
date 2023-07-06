@@ -33,7 +33,7 @@ CREATE TABLE contain_of (
     sequence char(50),
     legID char(50),
     routeID char(50) NOT NULL,
-    PRIMARY KEY (sequence),
+    PRIMARY KEY (sequence, legID, routeID),
     FOREIGN KEY (legID) REFERENCES leg (legID),
 	FOREIGN KEY (routeID) REFERENCES route (routeID)
 );
