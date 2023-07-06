@@ -62,7 +62,7 @@ DROP TABLE IF EXISTS seat;
 CREATE TABLE seat (
     seat_num char(3),
     ticketID char(50) NOT NULL,
-    PRIMARY KEY (seat_num),
+    PRIMARY KEY (ticketID, seat_num),
     FOREIGN KEY (ticketID) REFERENCES ticket (ticketID)
 );
 
