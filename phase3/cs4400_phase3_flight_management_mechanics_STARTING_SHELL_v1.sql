@@ -34,6 +34,24 @@ create procedure add_airplane (in ip_airlineID varchar(50), in ip_tail_num varch
     in ip_plane_type varchar(100), in ip_skids boolean, in ip_propellers integer,
     in ip_jet_engines integer)
 sp_main: begin
+	if ip_airlineID not in (select airlineId from airline) then
+		leave sp_main; end if;
+    
+    if (ip_airlineID, ip_tail_num) in (select (airlineId, tail_num) from airplane) then 
+		leave sp_main; end if;
+    
+    if (ip_seat_capacity <= 0) or (ip_speed <= 0) then
+		leave sp_main; end if;
+    
+    if (ip_plane_type = 'jet' and ip_jet_engines is null) or 
+    (ip_plane_type = 'prop' and (ip_skid is null or ip_propellers is null)) then 
+		leave sp_main; end if;
+    
+    -- still need to check location constraint here
+    
+    insert into airplane values (ip_airlineID, ip_tail_num, ip_seat_capacity, ip_speed,
+    ip_locationID, ip_plane_type, ip_skids, ip_propellers, ip_jet_engines);
+    
 
 end //
 delimiter ;
@@ -50,7 +68,17 @@ delimiter //
 create procedure add_airport (in ip_airportID char(3), in ip_airport_name varchar(200),
     in ip_city varchar(100), in ip_state char(2), in ip_locationID varchar(50))
 sp_main: begin
-
+	if ip_airportID in (select airportID from airport) then
+		leave sp_main; end if;
+    
+    -- New airports may or may not have a database-wide unique 
+    -- location identifier but will be given an identifier before people can go there to catch flights.
+    
+    if (ip_city is null or ip_state is null) then
+		leave sp_main; end if;
+    
+    insert into airport values (ip_airportID, ip_airport_name, ip_city, ip_state, ip_locationID);
+    
 end //
 delimiter ;
 
@@ -73,19 +101,53 @@ create procedure add_person (in ip_personID varchar(50), in ip_first_name varcha
     in ip_experience integer, in ip_flying_airline varchar(50), in ip_flying_tail varchar(50),
     in ip_miles integer)
 sp_main: begin
+	if ip_personID in (select personiID from person) then
+		leave sp_main; end if;
+    
+    if ip_locationID not in (select locationID from location) then
+		leave sp_main; end if;
+    
+    if (ip_taxID is not null) then 
+		if (ip_experience <= 0 or ip_experience is null) then
+			leave sp_main; end if;
+        
+        if ((ip_flying_airline, ip_flying_tail) not in 
+        (select (airlineID, tail_num) from airplane)) then
+			leave sp_main; end if;
+        
+        insert into person values (ip_personID, ip_first_name, ip_last_name, ip_locationID);
+        insert into pilot values (ip_personID, ip_taxID, ip_experience, ip_flying_airline, ip_flying_tail);
+        
+        leave sp_main;
+	end if;
+    
+    if (ip_miles is not null) then
+		insert into person values (ip_personID, ip_first_name, ip_last_name, ip_locationID);
+        insert into passenger values (ip_personID, ip_miles);
+        
+	end if;
 
 end //
 delimiter ;
 
 -- [4] grant_pilot_license()
 -- -----------------------------------------------------------------------------
-/* This stored procedure creates a new pilot license.  The license must reference
-a valid pilot, and must be a new/unique type of license for that pilot. */
+	/* This stored procedure creates a new pilot license.  The license must reference
+	a valid pilot, and must be a new/unique type of license for that pilot. */
 -- -----------------------------------------------------------------------------
 drop procedure if exists grant_pilot_license;
 delimiter //
 create procedure grant_pilot_license (in ip_personID varchar(50), in ip_license varchar(100))
 sp_main: begin
+	if ip_personID not in (select personID from pilot) then
+		leave sp_main; end if;
+    
+    if ((ip_personID, ip_license) in 
+		(select (ip_personID, ip_license) from pilot_licenses))
+	then
+		leave sp_main; end if;
+        
+	insert into pilot_licenses values (ip_personID, ip_license);
 
 end //
 delimiter ;
@@ -104,6 +166,9 @@ create procedure offer_flight (in ip_flightID varchar(50), in ip_routeID varchar
     in ip_support_airline varchar(50), in ip_support_tail varchar(50), in ip_progress integer,
     in ip_airplane_status varchar(100), in ip_next_time time)
 sp_main: begin
+	
+		
+	
 
 end //
 delimiter ;
@@ -124,6 +189,23 @@ create procedure purchase_ticket_and_seat (in ip_ticketID varchar(50), in ip_cos
 	in ip_carrier varchar(50), in ip_customer varchar(50), in ip_deplane_at char(3),
     in ip_seat_number varchar(50))
 sp_main: begin
+	if (ip_customer not in (select personID from person)) then
+		leave sp_main; end if;
+        
+	if (ip_deplane_at not in (select airportID from airport)) then
+		leave sp_main; end if;
+        
+	-- the ticket must list the destination airport what?
+    
+    if (ip_deplane_at is null or ip_carrier is null) then
+		leave sp_main; end if;
+        
+	if ((ip_carrier, ip_seat_number) in 
+		(select (carrier, customer) from ticket join ticket_seats on ticket.ticketID = ticket_seats.ticketID)) then
+			leave sp_main; end if;
+            
+	insert into ticket values (ip_ticketID, ip_cost, ip_carrier, ip_customer, ip_deplane_at);
+    insert into ticket_seats values (ip_tickerID, ip_seat_number);
 
 end //
 delimiter ;
@@ -141,6 +223,17 @@ delimiter //
 create procedure add_update_leg (in ip_legID varchar(50), in ip_distance integer,
     in ip_departure char(3), in ip_arrival char(3))
 sp_main: begin
+	if (ip_legID not in (select legID from leg)) then
+		insert into leg values (ip_legID, ip_distance, ip_departure, ip_arrival);
+        
+	end if;
+	
+    update leg set distance = ip_distance, departure = ip_departure, arrival = ip_arrival
+		where legID = ip_legID;	
+    
+	if ((ip_arrival, ip_departure) in (select (departure, arrival) from leg)) then
+		update leg set distance = ip_distance where (ip_arrival, ip_departure) = (departure, arrival);
+	end if;
 
 end //
 delimiter ;
@@ -318,7 +411,7 @@ delimiter ;
 -- -----------------------------------------------------------------------------
 create or replace view flights_in_the_air (departing_from, arriving_at, num_flights,
 	flight_list, earliest_arrival, latest_arrival, airplane_list) as
-select null, null, 0, null, null, null, null;
+select null, null, 0, null, null, null	, null;
 
 -- [20] flights_on_the_ground()
 -- -----------------------------------------------------------------------------
