@@ -248,6 +248,12 @@ drop procedure if exists start_route;
 delimiter //
 create procedure start_route (in ip_routeID varchar(50), in ip_legID varchar(50))
 sp_main: begin
+	if (ip_routeID in (select routeID from route_path)) then
+		leave sp_main; end if;
+    
+    insert into route values (ip_routeID);
+    insert into route_path values (ip_routeID, ip_legID, 1);
+    
 
 end //
 delimiter ;
@@ -263,6 +269,11 @@ drop procedure if exists extend_route;
 delimiter //
 create procedure extend_route (in ip_routeID varchar(50), in ip_legID varchar(50))
 sp_main: begin
+	if (ip_routeID in (select routeID from route)) then
+		insert into route_path values (ip_routeID, ip_legID, (select max(sequence) + 1
+															from route_path
+                                                            where routeID = ip_routeID)); end if;
+    
 
 end //
 delimiter ;
@@ -279,6 +290,44 @@ drop procedure if exists flight_landing;
 delimiter //
 create procedure flight_landing (in ip_flightID varchar(50))
 sp_main: begin
+update pilot
+set experience = experience + 1
+where flying_tail in 
+(select f.support_tail from route_path as rp join flight as f on rp.routeID = f.routeID where flightID = ip_flightID and progress = sequence);
+
+-- update passenger
+-- set miles = miles + (select distance from leg where legID in 
+-- (select rp.legID from route_path as rp join flight as f on rp.routeID = f.routeID where flightID = 'SW_1776' and progress = sequence))
+-- where personID in 
+
+-- (select personID from person 
+-- join location on person.locationID = location.locationID 
+-- join airplane on location.locationID = airplane.locationID 
+-- where tail_num in
+-- (select support_tail from route_path as rp join flight as f on rp.routeID = f.routeID where flightID = 'SW_1776' and progress = sequence)
+-- and personID in (select personID from passenger));
+
+update passenger
+set miles = miles + (
+select distance
+from leg
+where legID in (
+select rp.legID
+from route_path as rp
+join flight as f on rp.routeID = f.routeID
+where flightID = ip_flightID and progress = sequence))
+where personID in (select personID from (
+select personID
+from person 
+join location on person.locationID = location.locationID
+join airplane on location.locationID = airplane.locationID 
+where tail_num in (
+select support_tail 
+from route_path as rp 
+join flight as f on rp.routeID = f.routeID 
+where flightID = 'SW_1776' and progress = sequence) 
+and personID in (select personID from passenger)) as subquery);
+
 
 end //
 delimiter ;
