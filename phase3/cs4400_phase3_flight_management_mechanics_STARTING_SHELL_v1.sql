@@ -618,6 +618,22 @@ delimiter ;
 -- -----------------------------------------------------------------------------
 create or replace view flights_in_the_air (departing_from, arriving_at, num_flights,
 	flight_list, earliest_arrival, latest_arrival, airplane_list) as
+    
+    -- select the columns needed and name accordingly
+	select l.departure as departing_from, l.arrival as arriving_at, count(f.flightID) as num_flights, 
+		group_concat(f.flightID) as flight_list, min(f.next_time) as earliest_arrival, 
+		max(f.next_time) as latest_arrival, group_concat(a.locationID) as airplane_list
+	from flight as f
+    
+		-- join with route_path, leg, and airplane in order to get the legID, airlineID, and sequence/progress
+		join route_path as rp on f.routeID = rp.routeiD
+		join leg as l on rp.legID=l.legID
+		join airplane as a on f.support_airline = a.airlineID and f.support_tail = a.tail_num
+    
+    -- progress = sequence to make sure that we are checking flights on the path that are in the air
+	where f.progress = rp.sequence and airplane_status = 'in_flight'
+	group by departing_from, arriving_at;
+    
 select null, null, 0, null, null, null	, null;
 
 -- [20] flights_on_the_ground()
@@ -626,6 +642,19 @@ select null, null, 0, null, null, null	, null;
 -- -----------------------------------------------------------------------------
 create or replace view flights_on_the_ground (departing_from, num_flights,
 	flight_list, earliest_arrival, latest_arrival, airplane_list) as 
+    
+    -- select the columns needed and name accordingly
+    select l.departure as departing_from, count(f.flightID) as num_flights, group_concat(flightID) as flight_list, 
+		min(f.next_time) as earliest_arrival, max(f.next_time) as latest_arrival, group_concat(a.locationID) as airplane_list
+	from flight as f 
+		join route_path as rp on f.routeID = rp.routeID
+		join leg as l on rp.legID = l.legID
+		join airplane as a on f.support_airline = a.airlineID and f.support_tail = a.tail_num
+    
+	-- make sure that we are only getting flights on the ground or at the start of their route
+	where f.progress + 1 = rp.sequence and airplane_status = 'on_ground'
+	group by l.departure;
+    
 select null, 0, null, null, null, null;
 
 -- [21] people_in_the_air()
@@ -635,6 +664,22 @@ select null, 0, null, null, null, null;
 create or replace view people_in_the_air (departing_from, arriving_at, num_airplanes,
 	airplane_list, flight_list, earliest_arrival, latest_arrival, num_pilots,
 	num_passengers, joint_pilots_passengers, person_list) as
+    
+    -- reuse some code from flights_in_the_air to select the columns needed and name accordingly
+    select l.departure as departing_from, l.arrival as arriving_at, count(distinct a.locationID) as num_airplane, 
+		group_concat(distinct a.locationID) as airplane_list, group_concat(distinct f.flightID) as flight_list, 
+		min(f.next_time) as earliest_arrival, max(f.next_time) as latest_arrival, count(pl.personID) as num_pilots, 
+		count(pa.personID) as num_passengers, count(p.personID) as joint_pilots_passengers, group_concat(p.personID) as person_list
+	from flight as f
+	join airplane as a on f.support_airline = a.airlineID and f.support_tail = a.tail_num
+	join person as p on p.locationID = a.locationID
+	join route_path as rp on f.routeID = rp.routeID
+	join leg as l on rp.legID = l.legID
+	left join pilot as pl on p.personID = pl.personID
+	left join passenger as pa on p.personID = pa.personID
+	where f.progress = rp.sequence and airplane_status = 'in_flight'
+	group by l.departure, l.arrival;
+    
 select null, null, 0, null, null, null, null, 0, 0, null, null;
 
 -- [22] people_on_the_ground()
@@ -651,6 +696,17 @@ select null, null, null, null, null, 0, 0, null, null;
 -- -----------------------------------------------------------------------------
 create or replace view route_summary (route, num_legs, leg_sequence, route_length,
 	num_flights, flight_list, airport_sequence) as
+    
+    -- divide the sum by the number of flights to get route_length
+    select rp.routeID as route, count(distinct rp.legID) as num_legs, group_concat(distinct rp.legID order by sequence) as leg_sequence, 
+			(case when count(distinct flightID)>1 
+            then sum(distance) div count(distinct flightID) else sum(distance) end) as route_length,
+			count(distinct flightID) as num_flights, group_concat(distinct flightID) as flight_list, 
+            group_concat(distinct concat(departure, '->', arrival) order by sequence) as airport_sequence
+	from route_path as rp 
+	join leg as l on rp.legID = l.legID 
+	left join flight as f on rp.routeID = f.routeID
+	group by rp.routeID, f.routeID;
 select null, 0, null, 0, 0, null, null;
 
 -- [24] alternative_airports()
