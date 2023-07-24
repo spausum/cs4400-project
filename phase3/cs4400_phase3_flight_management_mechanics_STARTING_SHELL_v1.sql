@@ -34,20 +34,25 @@ create procedure add_airplane (in ip_airlineID varchar(50), in ip_tail_num varch
     in ip_plane_type varchar(100), in ip_skids boolean, in ip_propellers integer,
     in ip_jet_engines integer)
 sp_main: begin
-	if ip_airlineID not in (select airlineId from airline) then
+	-- make sure that the airplane exists in the airline table
+	if ip_airlineID not in (select airlineId from airline) or ip_airlineID is null then
 		leave sp_main; end if;
-    
-    if (ip_airlineID, ip_tail_num) in (select (airlineId, tail_num) from airplane) then 
+    -- make sure that tail number is unique
+    if (ip_airlineID, ip_tail_num) in (select airlineId, tail_num from airplane) then 
 		leave sp_main; end if;
-    
+    -- make sure that the seat capacity and speed is greater than or equal to zero
     if (ip_seat_capacity <= 0) or (ip_speed <= 0) then
 		leave sp_main; end if;
-    
-    if (ip_plane_type = 'jet' and ip_jet_engines is null) or 
-    (ip_plane_type = 'prop' and (ip_skid is null or ip_propellers is null)) then 
+    -- make sure that jets can't have propellors or skids
+    if (ip_plane_type = 'jet') and (ip_jet_engines is null or ip_propellers is not null or ip_skids is not null) then 
 		leave sp_main; end if;
-    
+	-- make sure that props have propellors and skids
+    if (ip_plane_type = 'prop') and (ip_jet_engines is not null or ip_propellers is null or ip_skids is null) then 
+		leave sp_main; end if;
+        
     -- still need to check location constraint here
+    if ip_locationID is not null and ip_locationID in (select distinct locationID from airplane) then
+		leave sp_main; end if;
     
     insert into airplane values (ip_airlineID, ip_tail_num, ip_seat_capacity, ip_speed,
     ip_locationID, ip_plane_type, ip_skids, ip_propellers, ip_jet_engines);
@@ -68,7 +73,8 @@ delimiter //
 create procedure add_airport (in ip_airportID char(3), in ip_airport_name varchar(200),
     in ip_city varchar(100), in ip_state char(2), in ip_locationID varchar(50))
 sp_main: begin
-	if ip_airportID in (select airportID from airport) then
+	-- make sure that airportID is unique and also not NULL 
+	if ip_airportID in (select airportID from airport) or ip_airportID is null then
 		leave sp_main; end if;
     
     -- New airports may or may not have a database-wide unique 
@@ -76,6 +82,10 @@ sp_main: begin
     
     if (ip_city is null or ip_state is null) then
 		leave sp_main; end if;
+        
+    -- we should look at adjusting to (select locationID from location where locationID like 'port%'   
+	if ip_locationID is not null and ip_locationID not in (select locationID from location)
+		then insert into location(locationID) values (ip_locationID); end if;
     
     insert into airport values (ip_airportID, ip_airport_name, ip_city, ip_state, ip_locationID);
     
@@ -101,31 +111,24 @@ create procedure add_person (in ip_personID varchar(50), in ip_first_name varcha
     in ip_experience integer, in ip_flying_airline varchar(50), in ip_flying_tail varchar(50),
     in ip_miles integer)
 sp_main: begin
-	if ip_personID in (select personiID from person) then
+	-- make that the new person has a unique id
+    if ip_personID is null or ip_personID in (select personID from person) then
 		leave sp_main; end if;
     
-    if ip_locationID not in (select locationID from location) then
-		leave sp_main; end if;
-    
-    if (ip_taxID is not null) then 
-		if (ip_experience <= 0 or ip_experience is null) then
-			leave sp_main; end if;
-        
-        if ((ip_flying_airline, ip_flying_tail) not in 
-        (select (airlineID, tail_num) from airplane)) then
-			leave sp_main; end if;
-        
-        insert into person values (ip_personID, ip_first_name, ip_last_name, ip_locationID);
-        insert into pilot values (ip_personID, ip_taxID, ip_experience, ip_flying_airline, ip_flying_tail);
-        
-        leave sp_main;
+    -- make sure that the new person has locationID either at the airport or in the airpolane
+    if ip_locationID is null or ip_locationID not in (select locationID from location) then
+		leave sp_main;
 	end if;
     
-    if (ip_miles is not null) then
-		insert into person values (ip_personID, ip_first_name, ip_last_name, ip_locationID);
-        insert into passenger values (ip_personID, ip_miles);
-        
-	end if;
+	insert into person values (ip_personID, ip_first_name, ip_last_name, ip_locationID);
+    
+    -- insert into pilot if taxID is not null
+    if ip_taxID is not null then
+		insert into pilot values (ip_personID, ip_taxID, ip_experience, ip_flying_airline, ip_flying_tail); end if;
+    
+    -- insert into passenger if they have flyer miles 
+    if ip_miles is not null then
+		insert into passenger values (ip_personID, ip_miles); end if;
 
 end //
 delimiter ;
@@ -139,11 +142,13 @@ drop procedure if exists grant_pilot_license;
 delimiter //
 create procedure grant_pilot_license (in ip_personID varchar(50), in ip_license varchar(100))
 sp_main: begin
+	-- make sure that the person is a pilot
 	if ip_personID not in (select personID from pilot) then
 		leave sp_main; end if;
     
-    if ((ip_personID, ip_license) in 
-		(select (ip_personID, ip_license) from pilot_licenses))
+    -- make sure that the pilot doesn't have that license already
+    if ip_license in 
+		(select license from pilot_licenses where ip_personID = personID)
 	then
 		leave sp_main; end if;
         
@@ -166,9 +171,12 @@ create procedure offer_flight (in ip_flightID varchar(50), in ip_routeID varchar
     in ip_support_airline varchar(50), in ip_support_tail varchar(50), in ip_progress integer,
     in ip_airplane_status varchar(100), in ip_next_time time)
 sp_main: begin
-	
-		
-	
+	-- make sure that the flight has a routeID
+    if ip_routeID is null then 
+		leave sp_main; end if;
+        
+	insert into flight values (ip_flightID, ip_routeID, ip_support_airline, ip_support_tail,
+    ip_progress, ip_airplane_status, ip_next_time);
 
 end //
 delimiter ;
@@ -189,14 +197,15 @@ create procedure purchase_ticket_and_seat (in ip_ticketID varchar(50), in ip_cos
 	in ip_carrier varchar(50), in ip_customer varchar(50), in ip_deplane_at char(3),
     in ip_seat_number varchar(50))
 sp_main: begin
+	-- make sure that customer exists
 	if (ip_customer not in (select personID from person)) then
 		leave sp_main; end if;
-        
-	if (ip_deplane_at not in (select airportID from airport)) then
+	-- make sure ticket lists the destination airport and is not null
+	if (ip_deplane_at not in (select flightID from flight where routeID in 
+		(select routeID from route_path where legID in 
+        (select legID from leg where arrival=ip_deplane_at )))) or ip_deplane_at is null then
 		leave sp_main; end if;
         
-	-- the ticket must list the destination airport what?
-    
     if (ip_deplane_at is null or ip_carrier is null) then
 		leave sp_main; end if;
         
@@ -223,17 +232,17 @@ delimiter //
 create procedure add_update_leg (in ip_legID varchar(50), in ip_distance integer,
     in ip_departure char(3), in ip_arrival char(3))
 sp_main: begin
-	if (ip_legID not in (select legID from leg)) then
-		insert into leg values (ip_legID, ip_distance, ip_departure, ip_arrival);
-        
-	end if;
-	
-    update leg set distance = ip_distance, departure = ip_departure, arrival = ip_arrival
-		where legID = ip_legID;	
-    
-	if ((ip_arrival, ip_departure) in (select (departure, arrival) from leg)) then
-		update leg set distance = ip_distance where (ip_arrival, ip_departure) = (departure, arrival);
-	end if;
+	 if (ip_legID not in (select legID from leg)) then
+ 		insert into leg values (ip_legID, ip_distance, ip_departure, ip_arrival);
+         
+ 	end if;
+ 	
+     update leg set distance = ip_distance, departure = ip_departure, arrival = ip_arrival
+ 		where legID = ip_legID;	
+     
+ 	if ((ip_arrival, ip_departure) in (select (departure, arrival) from leg)) then
+ 		update leg set distance = ip_distance where (ip_arrival, ip_departure) = (departure, arrival);
+ 	end if;
 
 end //
 delimiter ;
@@ -265,18 +274,45 @@ in our system must be created in the sequential order of the legs, and the route
 must be contiguous: the departure airport of this leg must be the same as the
 arrival airport of the previous leg. */
 -- -----------------------------------------------------------------------------
-drop procedure if exists extend_route;
-delimiter //
-create procedure extend_route (in ip_routeID varchar(50), in ip_legID varchar(50))
-sp_main: begin
-	if (ip_routeID in (select routeID from route)) then
-		insert into route_path values (ip_routeID, ip_legID, (select max(sequence) + 1
-															from route_path
-                                                            where routeID = ip_routeID)); end if;
-    
+ drop procedure if exists extend_route;
+ delimiter //
+ create procedure extend_route (in ip_routeID varchar(50), in ip_legID varchar(50))
+ sp_main: begin
+-- 	if (ip_routeID is null) or (ip_legID is null) then
+-- 		leave sp_main; end if;
+-- 	if (ip_routeID in (select routeID from route)) then
+-- 		insert into route_path values (ip_routeID, ip_legID, (select max(sequence) + 1
+-- 															from route_path
+--                                                             where routeID = ip_routeID)); end if;
+--     
+
+-- end //
+-- delimiter ;
+
+    -- Check if input parameters are not null
+    if ip_routeID is null or ip_legID is null 
+		then leave sp_main; end if;
+
+    -- Check if the ip_routeID exists in the route table
+    if not exists (select 1 from route where routeID = ip_routeID) 
+		then leave sp_main; end if;
+
+    -- Check if the ip_legID exists in the leg table
+    if not exists (select 1 from leg where legID = ip_legID) 
+		then leave sp_main; end if;
+
+    -- Check if the route is empty or if the ip_legID has the same departure airport as the last leg's arrival airport
+    if exists (select 1 from route_path rp join leg l on rp.legID = l.legID where routeID = ip_routeID
+        having COUNT(*) > 0 and MAX(l.arrival) <> (select departure from leg where legID = ip_legID)) 
+        then leave sp_main; end if;
+
+    -- Insert the new leg into the route_path table with the correct sequence
+    insert into route_path (select ip_routeID, ip_legID, ifnull(max(sequence), 0) + 1 from route_path
+    where routeID = ip_routeID);
 
 end //
-delimiter ;
+delimeter ;
+
 
 -- [10] flight_landing()
 -- -----------------------------------------------------------------------------
@@ -290,43 +326,39 @@ drop procedure if exists flight_landing;
 delimiter //
 create procedure flight_landing (in ip_flightID varchar(50))
 sp_main: begin
-update pilot
-set experience = experience + 1
-where flying_tail in 
-(select f.support_tail from route_path as rp join flight as f on rp.routeID = f.routeID where flightID = ip_flightID and progress = sequence);
+	if ip_flightID not in (select flightID from flight) then 
+		leave sp_main; end if;
+        
+	update pilot
+	set experience = experience + 1
+	where flying_tail in 
+	(select f.support_tail from route_path as rp 
+    join flight as f on rp.routeID = f.routeID where flightID = ip_flightID and progress = sequence);
 
--- update passenger
--- set miles = miles + (select distance from leg where legID in 
--- (select rp.legID from route_path as rp join flight as f on rp.routeID = f.routeID where flightID = 'SW_1776' and progress = sequence))
--- where personID in 
-
--- (select personID from person 
--- join location on person.locationID = location.locationID 
--- join airplane on location.locationID = airplane.locationID 
--- where tail_num in
--- (select support_tail from route_path as rp join flight as f on rp.routeID = f.routeID where flightID = 'SW_1776' and progress = sequence)
--- and personID in (select personID from passenger));
-
-update passenger
-set miles = miles + (
-select distance
-from leg
-where legID in (
-select rp.legID
-from route_path as rp
-join flight as f on rp.routeID = f.routeID
-where flightID = ip_flightID and progress = sequence))
-where personID in (select personID from (
-select personID
-from person 
-join location on person.locationID = location.locationID
-join airplane on location.locationID = airplane.locationID 
-where tail_num in (
-select support_tail 
-from route_path as rp 
-join flight as f on rp.routeID = f.routeID 
-where flightID = 'SW_1776' and progress = sequence) 
-and personID in (select personID from passenger)) as subquery);
+	update passenger
+	set miles = miles + (
+	select distance
+	from leg
+	where legID in (
+	select rp.legID
+	from route_path as rp
+	join flight as f on rp.routeID = f.routeID
+	where flightID = ip_flightID and progress = sequence))
+	where personID in (select personID from (
+	select personID
+	from person 
+	join location on person.locationID = location.locationID
+	join airplane on location.locationID = airplane.locationID 
+	where tail_num in (
+	select support_tail 
+	from route_path as rp 
+	join flight as f on rp.routeID = f.routeID 
+	where flightID = 'SW_1776' and progress = sequence) 
+	and personID in (select personID from passenger)) as subquery);
+    
+    update flight 
+    set next_time = TIMESTAMPADD(hour, 1, next_time), airplane_status = 'on_ground' 
+    where flightID = ip_flightID;
 
 
 end //
@@ -345,7 +377,36 @@ drop procedure if exists flight_takeoff;
 delimiter //
 create procedure flight_takeoff (in ip_flightID varchar(50))
 sp_main: begin
-
+    declare sp int;
+    declare pl_type varchar(100);
+    declare  dist int;
+    declare num_pilot int;
+    
+    select max(leg.distance) into dist from leg, flight, route_path
+    where flight.flightid = ip_flightid and flight.routeid = route_path.routeid and route_path.legid = leg.legid;
+    
+    select airplane.speed, plane_type into sp, pl_type from airplane,flight
+    where airplane.tail_num = flight.support_tail and flight.flightid = ip_flightid;
+    
+    select count(*) into num_pilot from pilot,flight
+    where pilot.flying_tail = flight.support_tail and flight.flightid = ip_flightid;
+    
+    update flight
+    set airplane_status = 'in_flight', next_time = date_add(next_time, interval dist/sp hour),progress=progress+1
+    where flight.flightid = ip_flightid;
+    
+    if pl_type ='jet' and num_pilot < 2 then
+	update flight
+	set airplane_status = 'in_flight' , next_time = date_add(next_time, interval 0.5 hour)
+	where flight.flightid = ip_flightid;
+    end if;
+    
+    
+    if pl_type ='prop' and num_pilot < 1 then
+	update flight
+	set airplane_status = 'in_flight' , next_time = date_add(next_time, interval 0.5 hour)
+	where flight.flightid = ip_flightid;
+    end if;
 end //
 delimiter ;
 
