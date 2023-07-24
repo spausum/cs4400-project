@@ -582,7 +582,36 @@ drop procedure if exists remove_pilot_role;
 delimiter //
 create procedure remove_pilot_role (in ip_personID varchar(50))
 sp_main: begin
+-- make sure that the pilot exists
+    if (ip_personID not in (select personID from pilot)) then
+		leave sp_main;
+    end if;
+    
+    -- make sure that the pilot is not assigned to a flight or at start/end 
+    -- this checks if ip_personID is fly airline or at the start or end of flight
+    
+    -- it should check if ip_personID is flying airplane and true airplane must be at start or end of route
 
+	if (ip_personID in (select personID from pilot where flying_tail is not null)) then
+		if (select progress from pilot 
+			join flight on pilot.flying_tail = flight.support_tail where personID = ip_personID) !=
+            (select flying_tail, max(sequence), min(sequence) from pilot as pi join airplane as a on pi.flying_tail = a.tail_num 
+				join flight as f on a.tail_num = f.support_tail 
+                join route_path as rp on f.routeID = rp.routeID where personID = ip_personID)
+		or (select progress from pilot join flight on pilot.flying_tail = flight.support_tail where personID = ip_personID) != 1 then
+			leave sp_main;
+		end if;
+    end if;
+    
+    -- only delete pilot and pilot_license
+    delete from pilot_licenses where ip_personID = personID;
+    delete from pilot where ip_personID = personID;
+    
+    if (ip_personID not in (select personID from passenger)) then
+		delete from person where personID = ip_personID;
+	end if;
+end //
+delimiter ;
 -- [19] flights_in_the_air()
 -- -----------------------------------------------------------------------------
 /* This view describes where flights that are currently airborne are located. */
