@@ -328,7 +328,9 @@ create procedure flight_landing (in ip_flightID varchar(50))
 sp_main: begin
 	if ip_flightID not in (select flightID from flight) then 
 		leave sp_main; end if;
-        
+	if ip_flightID in (select flightID from flight where airplane_status = 'on_ground') then
+		leave sp_main; end if;
+	
 	update pilot
 	set experience = experience + 1
 	where flying_tail in 
@@ -353,7 +355,7 @@ sp_main: begin
 	select support_tail 
 	from route_path as rp 
 	join flight as f on rp.routeID = f.routeID 
-	where flightID = 'SW_1776' and progress = sequence) 
+	where flightID = ip_flightID and progress = sequence) 
 	and personID in (select personID from passenger)) as subquery);
     
     update flight 
@@ -382,31 +384,39 @@ sp_main: begin
     declare  dist int;
     declare num_pilot int;
     
+    -- dont need to check for last leg of the trip 
+    
+    if ip_flightID not in (select flightID from flight) then
+		leave sp_main; end if;
+        
+	if ip_flightID in (select flightID from flight where airplane_status = 'in_flight') then
+		leave sp_main; end if;
+    
     select max(leg.distance) into dist from leg, flight, route_path
-    where flight.flightid = ip_flightid and flight.routeid = route_path.routeid and route_path.legid = leg.legid;
+    where flight.flightID = ip_flightID and flight.routeid = route_path.routeID and route_path.legID = leg.legID;
     
     select airplane.speed, plane_type into sp, pl_type from airplane,flight
-    where airplane.tail_num = flight.support_tail and flight.flightid = ip_flightid;
+    where airplane.tail_num = flight.support_tail and flight.flightID = ip_flightID;
     
     select count(*) into num_pilot from pilot,flight
-    where pilot.flying_tail = flight.support_tail and flight.flightid = ip_flightid;
-    
-    update flight
-    set airplane_status = 'in_flight', next_time = date_add(next_time, interval dist/sp hour),progress=progress+1
-    where flight.flightid = ip_flightid;
+    where pilot.flying_tail = flight.support_tail and flight.flightID = ip_flightID;
     
     if pl_type ='jet' and num_pilot < 2 then
-	update flight
-	set airplane_status = 'in_flight' , next_time = date_add(next_time, interval 0.5 hour)
-	where flight.flightid = ip_flightid;
-    end if;
-    
+		update flight
+		set airplane_status = 'in_flight' , next_time = date_add(next_time, interval 0.5 hour)
+		where flight.flightID = ip_flightID;
+        leave sp_main; end if;
     
     if pl_type ='prop' and num_pilot < 1 then
+		update flight
+		set airplane_status = 'in_flight' , next_time = date_add(next_time, interval 0.5 hour)
+		where flight.flightID = ip_flightID;
+		leave sp_main; end if;
+    
 	update flight
-	set airplane_status = 'in_flight' , next_time = date_add(next_time, interval 0.5 hour)
-	where flight.flightid = ip_flightid;
-    end if;
+    set airplane_status = 'in_flight', next_time = date_add(next_time, interval dist/sp hour),progress=progress+1
+    where flight.flightID = ip_flightID;
+    
 end //
 delimiter ;
 
@@ -434,7 +444,32 @@ drop procedure if exists passengers_disembark;
 delimiter //
 create procedure passengers_disembark (in ip_flightID varchar(50))
 sp_main: begin
-
+	-- make sure the passengers are in the flight, the flight is on the ground, and the flight is located at the destination airport
+if not exists (select personID from flight as f join ticket as t on t.carrier = f.flightID 
+				join person as p on t.customer=p.personID 
+				join route_path as r on f.routeID = r.routeID and f.progress = r.sequence 
+				join leg as l on r.legID = l.legID
+				where flightID = ip_flightID
+				and airplane_status = 'on_ground' 
+				and p.locationID = (select locationID from flight as f 
+				join airplane as a on f.support_airline = a.airlineID and f.support_tail = a.tail_num where flightID = ip_flightID)
+				and t.deplane_at = l.arrival) then
+		leave sp_main; end if;
+-- set where the deplane airport is to locationID
+update person
+set locationID = (select distinct a.locationID from flight as f 
+					join ticket as t on t.carrier = f.flightID join route_path as r on f.routeID = r.routeID and f.progress=r.sequence 
+					join leg as l on r.legID = l.legID 
+					join airport as a on a.airportID = l.arrival where flightID = ip_flightID and t.deplane_at = l.arrival)
+					where personID in (select * from (select t.customer from flight as f 
+					join ticket as t on t.carrier = f.flightID join person as p on t.customer=p.personID 
+					join route_path as r on f.routeID = r.routeID and f.progress=r.sequence 
+					join leg as l on r.legID=l.legID where flightID =ip_flightID
+					and airplane_status='on_ground' 
+					and p.locationID = (select locationID from flight as f 
+					join airplane as a on f.support_airline=a.airlineID and f.support_tail=a.tail_num where flightID = ip_flightID)
+					and t.deplane_at=l.arrival) as temp);
+					
 end //
 delimiter ;
 
@@ -450,7 +485,33 @@ drop procedure if exists assign_pilot;
 delimiter //
 create procedure assign_pilot (in ip_flightID varchar(50), ip_personID varchar(50))
 sp_main: begin
-
+	-- make sure locations of pilot and plane are the same
+    if (select locationID from pilot as pil 
+    join person as per on pil.personID=per.personID where pil.personID=ip_personID) <> 
+    (select a.locationID from flight as f join route_path as r on r.routeID=f.routeID 
+    join leg as l on r.legID = l.legID join airport as a on l.arrival=a.airportID where flightID=ip_flightID and f.progress=r.sequence) then
+		leave sp_main; end if;
+        
+	-- make sure that pilot's license is valid for the flight
+    if (select a.plane_type from flight as f 
+		join airplane as a on f.support_airline=a.airlineID and f.support_tail=a.tail_num where flightID=ip_flightID) not in (select license from pilot as p 
+        join pilot_licenses as pl on p.personID=pl.personID where p.personID=ip_personID) then
+		leave sp_main; end if;
+    
+    -- make sure that pilot only assigned to one flight
+    if (select flying_airline from pilot where personID=ip_personID) is not null or (select flying_tail from pilot where personID=ip_personID) is not null then
+		leave sp_main; end if;
+    
+    -- update the flying_airline and flying_tail in pilot table
+	update pilot
+	set flying_airline = (select support_airline from flight where flightID=ip_flightID), 
+		flying_tail = (select support_tail from flight where flightID=ip_flightID)
+		where personID = ip_personID;
+    
+    -- update locationID in person table
+    update person
+	set locationID = (select a.locationID from flight as f join airplane as a on f.support_airline=a.airlineID and f.support_tail=a.tail_num where flightID=ip_flightID)
+	where personID=ip_personID;
 end //
 delimiter ;
 
@@ -463,6 +524,8 @@ drop procedure if exists recycle_crew;
 delimiter //
 create procedure recycle_crew (in ip_flightID varchar(50))
 sp_main: begin
+-- GROUP NEEDS TO WORK ON THIS ONE
+-- jet vs prop test case potentially
 
 end //
 delimiter ;
@@ -478,6 +541,13 @@ delimiter //
 create procedure retire_flight (in ip_flightID varchar(50))
 sp_main: begin
 
+if ip_flightID not in (select flightID from flight where airplane_status = 'on_ground') or ip_flightID is null then
+leave sp_main; end if;
+
+if ip_flightID in (select flightID from flight where progress = 0 or progress = 
+(select max(rp.sequence) from flight as f join route_path as rp on rp.routeID = f.routeID where f.flightID = ip_flightID)) 
+then delete from flight where flightID = ip_flightID; end if;
+    
 end //
 delimiter ;
 
@@ -494,7 +564,8 @@ drop procedure if exists remove_passenger_role;
 delimiter //
 create procedure remove_passenger_role (in ip_personID varchar(50))
 sp_main: begin
-
+-- in 'port' means they are on the ground (only way to see) we can just remove them
+-- on a plane -> check ticket
 end //
 delimiter ;
 
@@ -511,9 +582,6 @@ drop procedure if exists remove_pilot_role;
 delimiter //
 create procedure remove_pilot_role (in ip_personID varchar(50))
 sp_main: begin
-
-end //
-delimiter ;
 
 -- [19] flights_in_the_air()
 -- -----------------------------------------------------------------------------
