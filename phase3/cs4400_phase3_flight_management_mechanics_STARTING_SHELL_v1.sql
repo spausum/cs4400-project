@@ -697,16 +697,22 @@ select null, null, null, null, null, 0, 0, null, null;
 create or replace view route_summary (route, num_legs, leg_sequence, route_length,
 	num_flights, flight_list, airport_sequence) as
     
-    -- divide the sum by the number of flights to get route_length
-    select rp.routeID as route, count(distinct rp.legID) as num_legs, group_concat(distinct rp.legID order by sequence) as leg_sequence, 
-			(case when count(distinct flightID)>1 
-            then sum(distance) div count(distinct flightID) else sum(distance) end) as route_length,
-			count(distinct flightID) as num_flights, group_concat(distinct flightID) as flight_list, 
-            group_concat(distinct concat(departure, '->', arrival) order by sequence) as airport_sequence
-	from route_path as rp 
-	join leg as l on rp.legID = l.legID 
-	left join flight as f on rp.routeID = f.routeID
-	group by rp.routeID, f.routeID;
+	select r.routeID AS route, count(distinct rp.legID) AS num_legs, 
+		group_concat(distinct rp.legID order by rp.sequence) as leg_sequence,
+		route_total_distance.total_distance AS route_length, count(distinct f.flightID) as num_flights,
+        group_concat(distinct f.flightID) AS flight_list,
+        group_concat(distinct concat(l.departure, '->', l.arrival) order by rp.sequence) as airport_sequence
+	from route r
+    
+    -- join on route_path, leg, and flight to get sequence, flightIDs, distance
+	join route_path rp on r.routeID = rp.routeID
+	join leg l on rp.legID = l.legID
+	left join flight f on r.routeID = f.routeID
+    
+    -- join subquery to get the correct total distance for each route 
+	join (select routeID, sum(distance) as total_distance from route_path rp join leg l on rp.legID = l.legID group by routeID) 
+			as route_total_distance on r.routeID = route_total_distance.routeID
+	group by r.routeID;
 select null, 0, null, 0, 0, null, null;
 
 -- [24] alternative_airports()
