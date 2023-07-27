@@ -201,9 +201,9 @@ sp_main: begin
 	if (ip_customer not in (select personID from person)) then
 		leave sp_main; end if;
 	-- make sure ticket lists the destination airport and is not null
-	if (ip_deplane_at not in (select flightID from flight where routeID in 
+	if (ip_deplane_at in (select flightID from flight where routeID in 
 		(select routeID from route_path where legID in 
-        (select legID from leg where arrival=ip_deplane_at )))) or ip_deplane_at is null then
+        (select legID from leg where arrival=ip_deplane_at )))) then
 		leave sp_main; end if;
         
     if (ip_deplane_at is null or ip_carrier is null) then
@@ -811,6 +811,16 @@ select null, 0, null, 0, 0, null, null;
 -- -----------------------------------------------------------------------------
 create or replace view alternative_airports (city, state, num_airports,
 	airport_code_list, airport_name_list) as
+    select city, 
+		state, 
+		count(*) as num_airports, 
+		group_concat(airportID order by airportID ASC separator ', ') as airport_code_list, 
+		group_concat(airport_name order by airportID ASC separator ', ') as airport_name_list 
+	from airport
+   	 group by city, state
+   	 having count(airportID) > 1
+   	 order by city;
+
 select null, null, 0, null, null;
 
 -- [25] simulation_cycle()
