@@ -616,6 +616,34 @@ create procedure remove_passenger_role (in ip_personID varchar(50))
 sp_main: begin
 -- in 'port' means they are on the ground (only way to see) we can just remove them
 -- on a plane -> check ticket
+	-- checks that the person is a passenger and is their locationID joined with flight is not "inflight"
+    if (ip_personID in (
+		select pr.personID from person as pr 
+		join passenger pas on pr.personID = pas.personID 
+		join airplane as a on pr.locationID = a.locationID join flight as f on a.tail_num = f.support_tail 
+		where f.airplane_status = 'in_flight')
+)	then 
+		leave sp_main;
+    end if;
+    
+	-- check if ID maps to a real person's ID in database 
+    if (ip_personID not in (
+		select personID
+        from passenger))then
+		leave sp_main;
+    end if;
+    
+	-- remove from passenger, person, and ticket where the ID matches
+    if (ip_personID not in (
+		select personID
+        from pilot
+	)
+)	then
+        delete from passenger where ip_personID = personID;
+		delete from ticket where ip_personID = customer;
+        delete from person where ip_personID = personID;
+    end if;
+
 end //
 delimiter ;
 
