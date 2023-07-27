@@ -766,6 +766,18 @@ select null, null, 0, null, null, null, null, 0, 0, null, null;
 -- -----------------------------------------------------------------------------
 create or replace view people_on_the_ground (departing_from, airport, airport_name,
 	city, state, num_pilots, num_passengers, joint_pilots_passengers, person_list) as
+    select apt.airportID as departing_from, p.locationID as airport, apt.airport_name, 
+    apt.city, apt.state,count(pilot.personID) as num_pilots, count(passenger.personID) as num_passengers, 
+    count(p.personID) as joint_pilots_passengers, group_concat(p.personID) as person_list
+	from person as p
+    join airport as apt on p.locationID=apt.locationID
+	left join pilot on p.personID=pilot.personID
+	left join passenger on p.personID=passenger.personID
+    -- we need all these columns in select statement so we should gropu by all of them
+	group by apt.airportID, p.locationID, apt.airport_name, apt.city, apt.state
+    -- the use-case result table looks ordered by airportID
+	order by apt.airportID;
+
 select null, null, null, null, null, 0, 0, null, null;
 
 -- [23] route_summary()
