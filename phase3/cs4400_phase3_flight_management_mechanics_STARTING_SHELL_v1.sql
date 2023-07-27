@@ -430,6 +430,56 @@ drop procedure if exists passengers_board;
 delimiter //
 create procedure passengers_board (in ip_flightID varchar(50))
 sp_main: begin
+	declare boarding_location varchar(10);
+    
+	if (ip_flightID not in (select flightID from flight)) then
+		leave sp_main;
+	end if;
+    
+    if exists (
+				select flight.flightID
+                from flight
+					join ticket on ticket.carrier = flight.flightID
+                    -- checking for ticket being valid 
+					join person on ticket.customer = person.personID
+                    -- matching ticket holders to people 
+				where flightID = ip_flightID and person.locationID = (
+					-- making sure passengers are at the right airport of the flight 
+                    select airport.locationID
+                    from flight join route_path on route_path.routeID = flight.routeID
+								join leg on route_path.legID = leg.legID 
+                                join airport on leg.departure = airport.airportID
+					where flightID = ip_flightID and flight.progress = route_path.sequence - 1)
+				)
+	-- once checked that everything is valid to change, then go to implementing 
+	then set boarding_location = (
+			select airplane.locationID
+            from flight join airplane on flight.support_airline = airplane.airlineID and flight.support_tail = airplane.tail_num
+            where flightID = ip_flightID
+		);
+        
+        update person
+        -- changing value for people only on flight
+        set locationID = boarding_location
+        where personID in (
+			select *
+            from (
+				select ticket.customer
+                from flight
+					join ticket on ticket.carrier = flight.flightID
+					join person on ticket.customer = person.personID
+				where flightID = ip_flightID and person.locationID = (
+					select airport.locationID
+                    from flight join route_path on route_path.routeID = flight.routeID
+								join leg on route_path.legID = leg.legID
+                                join airport on leg.departure = airport.airportID
+					where flightID = ip_flightID and flight.progress = route_path.sequence - 1
+				)
+                -- assign to subq for functionality - won't call again
+			) as temp_var
+		);
+                                            
+		end if;
 
 end //
 delimiter ;
