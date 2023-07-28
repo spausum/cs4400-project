@@ -228,18 +228,15 @@ delimiter //
 create procedure add_update_leg (in ip_legID varchar(50), in ip_distance integer,
     in ip_departure char(3), in ip_arrival char(3))
 sp_main: begin
-	 if (ip_legID not in (select legID from leg)) then
- 		insert into leg values (ip_legID, ip_distance, ip_departure, ip_arrival);
-         
- 	end if;
---  	
---      update leg set distance = ip_distance, departure = ip_departure, arrival = ip_arrival
---  		where legID = ip_legID;	
-     
- 	if ((ip_arrival, ip_departure) in (select (departure, arrival) from leg)) then
- 		update leg set distance = ip_distance where (ip_arrival, ip_departure) = (departure, arrival);
- 	end if;
-
+	if exists (select * from leg where ip_departure = departure and ip_arrival = arrival) then
+		update leg set distance = ip_distance where ip_departure = departure and ip_arrival = arrival;
+	else
+		insert into leg values (ip_legID, ip_distance, ip_departure, ip_arrival);
+	end if;
+    
+    if exists (select * from leg where ip_departure = arrival and ip_arrival = departure) then
+		update leg set distance = ip_distance where ip_departure = arrival and ip_arrival = departure;
+	end if;
 end //
 delimiter ;
 
@@ -367,32 +364,75 @@ sp_main: begin
     declare pl_type varchar(100);
     declare  dist int;
     declare num_pilot int;
+    
+    if ip_flightID not in (select flightID from flight) then
+		leave sp_main;
+	end if;
+    
+    if (select airplane_status from flight where flightID = ip_flightID) like 'in_flight' then
+		leave sp_main;
+	end if;
+    
+    if (select progress from flight where ip_flightID = flightID) = 
+    (select max(sequence) from flight as f join route_path as rp on f.routeID = rp.routeID 
+    join leg as l on l.legID = rp.legID where f.flightID = ip_flightID) then
+		leave sp_main;
+	end if;
+    
+    if (select progress from flight where ip_flightID = flightID) is null then
+		leave sp_main;
+	end if;
 
-    select max(leg.distance) into dist from leg, flight, route_path
-    where flight.flightid = ip_flightid and flight.routeid = route_path.routeid and route_path.legid = leg.legid;
+-- not correct
+--     select max(leg.distance) into dist from leg, flight, route_path
+--     where flight.flightid = ip_flightid and flight.routeid = route_path.routeid and route_path.legid = leg.legid;alter
 
-    select airplane.speed, plane_type into sp, pl_type from airplane,flight
-    where airplane.tail_num = flight.support_tail and flight.flightid = ip_flightid;
+-- correct version
+	select distance into dist from flight as f join route_path as rp on f.routeID = rp.routeID 
+	join leg as l on l.legID = rp.legID where f.flightID = ip_flightID and progress + 1 = sequence;
 
-    select count(*) into num_pilot from pilot,flight
-    where pilot.flying_tail = flight.support_tail and flight.flightid = ip_flightid;
+--     select airplane.speed, plane_type into sp, pl_type from airplane,flight
+--     where airplane.tail_num = flight.support_tail and flight.flightid = ip_flightid;
+
+	select a.speed, a.plane_type into sp, pl_type from flight as f 
+    join airplane as a on f.support_tail = a.tail_num where f.flightID = ip_flightID;
+
+--     select count(*) into num_pilot from pilot,flight
+--     where pilot.flying_tail = flight.support_tail and flight.flightid = ip_flightid;
+
+	select count(*) from pilot as p join airplane as a on p.flying_tail = a.tail_num 
+	join flight as f on a.tail_num = f.support_tail where f.flightID = ip_flightID;
+    
+        if pl_type ='jet' and num_pilot < 2 then
+	update flight
+	set next_time = date_add(next_time, interval 0.5 hour)
+	where flight.flightid = ip_flightid;
+    leave sp_main;
+    end if;
+    
+        if pl_type ='prop' and num_pilot < 1 then
+	update flight
+	set next_time = date_add(next_time, interval 0.5 hour)
+	where flight.flightid = ip_flightid;
+    leave sp_main;
+    end if;
 
     update flight
     set airplane_status = 'in_flight', next_time = date_add(next_time, interval dist/sp hour),progress=progress+1
     where flight.flightid = ip_flightid;
 
-    if pl_type ='jet' and num_pilot < 2 then
-	update flight
-	set airplane_status = 'in_flight' , next_time = date_add(next_time, interval 0.5 hour)
-	where flight.flightid = ip_flightid;
-    end if;
+--     if pl_type ='jet' and num_pilot < 2 then
+-- 	update flight
+-- 	set airplane_status = 'in_flight' , next_time = date_add(next_time, interval 0.5 hour)
+-- 	where flight.flightid = ip_flightid;
+--     end if;
 
 
-    if pl_type ='prop' and num_pilot < 1 then
-	update flight
-	set airplane_status = 'in_flight' , next_time = date_add(next_time, interval 0.5 hour)
-	where flight.flightid = ip_flightid;
-    end if;
+--     if pl_type ='prop' and num_pilot < 1 then
+-- 	update flight
+-- 	set airplane_status = 'in_flight' , next_time = date_add(next_time, interval 0.5 hour)
+-- 	where flight.flightid = ip_flightid;
+--     end if;
 end //
 delimiter ;
 
@@ -857,6 +897,34 @@ drop procedure if exists simulation_cycle;
 delimiter //
 create procedure simulation_cycle ()
 sp_main: begin
+		-- Create Test Case Value
+	declare testCase VARCHAR(50);
+	set testCase = (select flightID
+	from flight where next_time = (select min(next_time) from flight)
+	group by flightID
+	order by airplane_status = 'in_flight', flightID
+	limit 1);
+
+	-- Case 1
+	IF EXISTS (select flightID from flight where airplane_status = 'in_flight' and flightID = testCase)
+	then
+	call flight_landing(testCase);
+	call passengers_disembark(testCase); 
+	end if;
+	-- Case 2
+	IF EXISTS (select flightID from flight where airplane_status = 'on_ground' and flightID = testCase)
+	then
+	call passengers_board(testCase);
+	call flight_takeoff(testCase);
+	end if;
+
+	-- Case 3
+	if exists(select fli.flightID from flight fli, route_path rou where fli.airplane_status = 'on_ground' and fli.routeID = rou.routeID and fli.flightID = testCase 
+	and fli.progress = rou.sequence) then 
+	call recycle_crew(testCase);
+	call retire_flight(testCase);
+	end if;
+
 
 end //
 delimiter ;
