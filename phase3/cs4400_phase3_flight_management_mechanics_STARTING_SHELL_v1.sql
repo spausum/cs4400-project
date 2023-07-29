@@ -891,34 +891,36 @@ drop procedure if exists simulation_cycle;
 delimiter //
 create procedure simulation_cycle ()
 sp_main: begin
-		-- Create Test Case Value
 	declare testCase VARCHAR(50);
+    -- selects the flight with the min next_time sequence
 	set testCase = (select flightID
 	from flight where next_time = (select min(next_time) from flight)
 	group by flightID
 	order by airplane_status = 'in_flight', flightID
 	limit 1);
 
-	-- Case 1
+	-- if flight is "in_flight" or flying then land the plane and passengers should leave the flight
 	if exists (select flightID from flight where airplane_status = 'in_flight' and flightID = testCase)
 	then
 	call flight_landing(testCase);
 	call passengers_disembark(testCase); 
 	end if;
-	-- Case 2
+	
+    -- if flight is on ground passengers should board and the plane should take off
 	if exists (select flightID from flight where airplane_status = 'on_ground' and flightID = testCase)
 	then
 	call passengers_board(testCase);
 	call flight_takeoff(testCase);
 	end if;
 
-	-- Case 3
-	if exists(select fli.flightID from flight fli, route_path rou where fli.airplane_status = 'on_ground' and fli.routeID = rou.routeID and fli.flightID = testCase 
+	-- if the flight has ended,
+    -- then crew should get recycled
+    -- flight should be recycled
+	if exists(select fli.flightID from flight fli, route_path rou where fli.airplane_status = 'on_ground' and 
+    fli.routeID = rou.routeID and fli.flightID = testCase 
 	and fli.progress = rou.sequence) then 
 	call recycle_crew(testCase);
 	call retire_flight(testCase);
 	end if;
-
-
 end //
 delimiter ;
