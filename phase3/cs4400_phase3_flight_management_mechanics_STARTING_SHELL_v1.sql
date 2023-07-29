@@ -400,26 +400,24 @@ sp_main: begin
 --     select count(*) into num_pilot from pilot,flight
 --     where pilot.flying_tail = flight.support_tail and flight.flightid = ip_flightid;
 
-	select count(*) from pilot as p join airplane as a on p.flying_tail = a.tail_num 
+	select count(*) into num_pilot from pilot as p join airplane as a on p.flying_tail = a.tail_num 
 	join flight as f on a.tail_num = f.support_tail where f.flightID = ip_flightID;
     
-        if pl_type ='jet' and num_pilot < 2 then
-	update flight
-	set next_time = date_add(next_time, interval 0.5 hour)
-	where flight.flightid = ip_flightid;
-    leave sp_main;
+	if pl_type ='jet' and num_pilot < 2 then
+		update flight set next_time = next_time + interval 30 minute
+			where flight.flightid = ip_flightid;
+		leave sp_main;
     end if;
     
-        if pl_type ='prop' and num_pilot < 1 then
-	update flight
-	set next_time = date_add(next_time, interval 0.5 hour)
-	where flight.flightid = ip_flightid;
-    leave sp_main;
+	if pl_type ='prop' and num_pilot < 1 then
+		update flight set next_time = next_time + interval 30 minute
+			where flight.flightID = ip_flightID;
+		leave sp_main;
     end if;
 
     update flight
-    set airplane_status = 'in_flight', next_time = date_add(next_time, interval dist/sp hour),progress=progress+1
-    where flight.flightid = ip_flightid;
+    set airplane_status = 'in_flight', next_time = next_time + interval (dist/sp) hour,progress=progress+1
+    where flight.flightID = ip_flightID;
 
 --     if pl_type ='jet' and num_pilot < 2 then
 -- 	update flight
@@ -772,14 +770,14 @@ create or replace view flights_on_the_ground (departing_from, num_flights,
 	flight_list, earliest_arrival, latest_arrival, airplane_list) as 
     
     -- select the columns needed and name accordingly
-    select l.departure as departing_from, count(f.flightID) as num_flights, group_concat(flightID) as flight_list, 
-		min(f.next_time) as earliest_arrival, max(f.next_time) as latest_arrival, group_concat(a.locationID) as airplane_list
+    select l.departure as departing_from, count(f.flightID) as num_flights, group_concat(flightID SEPARATOR ', ') as flight_list, 
+		min(f.next_time) as earliest_arrival, max(f.next_time) as latest_arrival, group_concat(a.locationID SEPARATOR ', ') as airplane_list
 	from flight as f 
 		join route_path as rp on f.routeID = rp.routeID
 		join leg as l on rp.legID = l.legID
 		join airplane as a on f.support_airline = a.airlineID and f.support_tail = a.tail_num
     
-	-- make sure that we are only getting flights on the ground or at the start of their route
+	-- make sure that we are only getting flights on the ground and where progress and sequence is the same
 	where f.progress + 1 = rp.sequence and airplane_status = 'on_ground'
 	group by l.departure;
     
